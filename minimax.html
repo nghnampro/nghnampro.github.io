@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>tách văn bản & tải json</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: auto;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      margin-bottom: 10px;
+      padding: 10px;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+    button {
+      padding: 10px 20px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    button:hover {
+      background: #218838;
+    }
+    .chunk {
+      background: #f4f4f4;
+      border-left: 4px solid #28a745;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .chunk.highlighted {
+      background: #e6f3ff; /* màu nền highlight */
+      border-left: 4px solid #007bff; /* viền highlight */
+    }
+    .chunk-header {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .chunk-body {
+      white-space: pre-wrap; /* giữ nguyên xuống dòng */
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .copy-btn {
+      background: #17a2b8;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+    .copy-btn:hover {
+      background: #138496;
+    }
+    #chunkCount {
+      font-weight: bold;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <h2>✂️ tách văn bản ≤ 4500 ký tự & tải json</h2>
+  <textarea id="inputText" placeholder="dán văn bản vào đây..."></textarea>
+  <br>
+  <button onclick="splitAndShow()">📥 tách & hiển thị</button>
+  <div id="chunkCount"></div>
+  <div id="output"></div>
+
+  <script>
+    const MAX_LIMIT = 4500;
+
+    // Danh sách từ dễ nhầm lẫn và thay thế
+    const confusableWords = {
+      'im': 'ym'
+    };
+
+    // Hàm thay thế các từ dễ nhầm lẫn
+    function replaceConfusableWords(text) {
+      let result = text;
+      for (const [key, value] of Object.entries(confusableWords)) {
+        const regex = new RegExp(`\\b${key}\\b`, 'g');
+        result = result.replace(regex, value);
+      }
+      return result;
+    }
+
+    // Khôi phục nội dung textarea từ localStorage khi tải trang
+    window.onload = () => {
+      const savedText = localStorage.getItem('inputText');
+      if (savedText) {
+        document.getElementById('inputText').value = savedText;
+        splitAndShow(); // Tự động hiển thị các đoạn đã lưu
+      }
+    };
+
+    // Tách theo dấu kết thúc câu + giữ dòng \n
+    function splitBySentences(text) {
+      const regex = /[^\n.?!。？！]+[.?!。？！]*\n?|[\n]/g;
+      const result = [];
+      let buffer = '';
+
+      text.match(regex)?.forEach(part => {
+        buffer += part;
+        if (/[.?!。？！]\s*$/.test(part) || part === '\n') {
+          result.push(buffer);
+          buffer = '';
+        }
+      });
+      if (buffer.trim()) result.push(buffer);
+      return result.filter(s => s.trim() !== '');
+    }
+
+    // Gom thành đoạn ≤ 4500 ký tự, giữ nguyên \n
+    function chunkSentences(sentences, limit) {
+      const chunks = [];
+      let buffer = '';
+
+      for (let sentence of sentences) {
+        const temp = buffer + sentence;
+        if (temp.length <= limit) {
+          buffer = temp;
+        } else {
+          if (buffer) chunks.push(buffer); // Không dùng trim để giữ \n
+          buffer = sentence;
+          if (sentence.length > limit) {
+            while (sentence.length > limit) {
+              chunks.push(sentence.slice(0, limit));
+              sentence = sentence.slice(limit);
+            }
+            buffer = sentence;
+          }
+        }
+      }
+      if (buffer) chunks.push(buffer); // Không dùng trim để giữ \n
+      return chunks;
+    }
+
+    // Lấy danh sách các đoạn đã highlight từ localStorage
+    function getHighlightedChunks() {
+      const stored = localStorage.getItem('highlightedChunks');
+      return stored ? JSON.parse(stored) : [];
+    }
+
+    // Lưu danh sách các đoạn đã highlight vào localStorage
+    function saveHighlightedChunk(index) {
+      const highlightedChunks = getHighlightedChunks();
+      if (!highlightedChunks.includes(index)) {
+        highlightedChunks.push(index);
+        localStorage.setItem('highlightedChunks', JSON.stringify(highlightedChunks));
+      }
+    }
+
+    function splitAndShow() {
+      let rawText = document.getElementById('inputText').value;
+      const outputDiv = document.getElementById('output');
+      const chunkCountDiv = document.getElementById('chunkCount');
+      outputDiv.innerHTML = '';
+      chunkCountDiv.textContent = '';
+
+      // Chuyển văn bản sang chữ thường
+      rawText = rawText.toLowerCase();
+
+      // Thay thế các từ dễ nhầm lẫn
+      rawText = replaceConfusableWords(rawText);
+
+      // Lưu nội dung textarea (sau xử lý) vào localStorage
+      localStorage.setItem('inputText', rawText);
+
+      if (!rawText.trim()) {
+        alert("⚠️ vui lòng nhập văn bản.");
+        localStorage.removeItem('inputText'); // Xóa nếu textarea rỗng
+        localStorage.removeItem('highlightedChunks'); // Xóa highlight nếu không có nội dung
+        return;
+      }
+
+      const sentences = splitBySentences(rawText);
+      const chunks = chunkSentences(sentences, MAX_LIMIT);
+      const highlightedChunks = getHighlightedChunks();
+
+      chunkCountDiv.textContent = `🔢 đã tách được ${chunks.length} đoạn`;
+
+      chunks.forEach((chunk, index) => {
+        const div = document.createElement('div');
+        div.className = 'chunk';
+        if (highlightedChunks.includes(index)) {
+          div.classList.add('highlighted'); // Khôi phục trạng thái highlight
+        }
+
+        const header = document.createElement('div');
+        header.className = 'chunk-header';
+        header.textContent = `🧩 đoạn ${index + 1} – ${chunk.length} ký tự`;
+
+        const body = document.createElement('div');
+        body.className = 'chunk-body';
+        body.innerText = chunk; // Giữ \n
+
+        // Nút copy cho từng đoạn
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.textContent = '📋 copy';
+        copyBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(chunk);
+            copyBtn.textContent = '✅ đã copy';
+            div.classList.add('highlighted'); // Thêm highlight khi copy
+            saveHighlightedChunk(index); // Lưu vào localStorage
+            setTimeout(() => {
+              copyBtn.textContent = '📋 copy';
+            }, 2000);
+          } catch (err) {
+            alert('⚠️ lỗi khi copy: ' + err);
+          }
+        };
+
+        div.appendChild(header);
+        div.appendChild(body);
+        div.appendChild(copyBtn);
+        outputDiv.appendChild(div);
+      });
+
+      // Nút tải JSON
+      const btn = document.createElement('button');
+      btn.textContent = '💾 tải json';
+      btn.style.background = '#007bff';
+      btn.onclick = () => {
+        const blob = new Blob([JSON.stringify(chunks, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'split_text.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      outputDiv.appendChild(btn);
+    }
+  </script>
+</body>
+</html>

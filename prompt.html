@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Trình Tối Ưu Prompt với Gemini API</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    textarea { width: 100%; height: 150px; margin-bottom: 10px; }
+    button { padding: 10px 20px; margin: 5px 10px 10px 0; cursor: pointer; }
+    select { padding: 10px; margin-bottom: 10px; width: 100%; }
+    .instruction-item, .prompt-item {
+      display: flex; align-items: center; margin-bottom: 10px;
+      border: 1px solid #ccc; padding: 10px;
+    }
+    .instruction-item textarea, .prompt-item textarea {
+      flex: 1; height: 60px; margin-right: 10px;
+    }
+    .prompt-item .stt { width: 50px; font-weight: bold; margin-right: 10px; }
+    .optimize-btn { background-color: #4CAF50; color: white; }
+    .delete-btn { background-color: #f44336; color: white; }
+    .status { margin-left: 10px; color: #666; font-size: 0.9em; }
+    .progress-bar { width: 100%; background-color: #ddd; margin: 10px 0; }
+    .progress { height: 20px; background-color: #4CAF50; width: 0%; text-align: center; color: white; }
+    #output-prompts { white-space: pre-wrap; background: #f0f0f0; padding: 10px; }
+    .error-message { color: red; margin: 10px 0; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Trình Tối Ưu Prompt với Gemini API</h1>
+
+  <div>
+    <h2>Tuỳ chọn API Key</h2>
+    <textarea id="user-api" placeholder="Nhập API key riêng của bạn (mỗi dòng một key, tùy chọn)..."></textarea>
+    <button onclick="saveUserApi()">Lưu API riêng</button>
+    <div class="error-message" id="user-api-error"></div>
+  </div>
+
+  <div>
+    <h2>Nhập Prompt</h2>
+    <textarea id="input-prompts" placeholder="Nhập mỗi prompt trên một dòng..."></textarea>
+    <button onclick="saveInputPrompts()">Lưu danh sách prompt</button>
+    <button onclick="restoreOriginalPrompts()">🔄 Khôi phục prompt gốc</button>
+    <div class="error-message" id="input-error"></div>
+  </div>
+
+  <div>
+    <h2>Quản lý hướng dẫn (Instruction)</h2>
+    <textarea id="new-instruction" placeholder="Nhập hướng dẫn cho Gemini API..."></textarea>
+    <button onclick="addInstruction()">Thêm hướng dẫn</button>
+    <select id="instruction-select">
+      <option value="">Chọn một hướng dẫn</option>
+    </select>
+    <div id="instruction-list"></div>
+    <div class="error-message" id="instruction-error"></div>
+  </div>
+
+  <div>
+    <h2>Tối ưu Prompt</h2>
+    <button class="optimize-btn" onclick="optimizeAllPrompts()">Tối ưu tất cả</button>
+    <div class="progress-bar" id="progress-container" style="display: none;">
+      <div class="progress" id="progress-bar">0%</div>
+    </div>
+    <div id="prompt-list"></div>
+    <div class="error-message" id="optimize-error"></div>
+  </div>
+
+  <div>
+    <h2>Kết quả đầu ra</h2>
+    <pre id="output-prompts"></pre>
+    <button onclick="copyOutput()">📋 Sao chép</button>
+    <button onclick="downloadTxt()">📥 Tải TXT</button>
+  </div>
+
+  <script>
+    const USER_API_KEYS = `
+AIzaSyAo20z_QcFg8b_jJUfRYe_V8LPgiyRA_Hw
+AIzaSyDiNBzW7NGOScvvl6vtmT_BK3zejsWnAiI
+AIzaSyCbvZODVDtnLj68uOFAJh0DoZmIhYsNvxY
+AIzaSyCgHla5UG0brt7n3j4Mh8OzpBmYrNK_c6o
+AIzaSyBPKFhebzuq_sgRYwuvUKaLINyrBmqcmwc
+AIzaSyC3f7ysiLDD4kbKNkiz33mEkfM9JCBZTJs
+AIzaSyDXDvZkSPUV-IkCCgRRShb5kjOR877fN3w
+AIzaSyBf9tFgE-MxVziPVsID7TRbEn8L3fHDzFM
+AIzaSyBksbxJHYbhX8Nj3UYR4P51yBo4mqtZCuY
+AIzaSyDATptk6FDiaPx3MlF5O6vzC80nfOvfe84
+AIzaSyDmVZ6owEQI2buoNDNkoUVeJdu5zsntZ6Q
+AIzaSyAIxWfSjC58D2SR_vh-EcKBOSKsxMtsj-I
+AIzaSyDQ3QwSR65I82osYx-VZUguOIEkcl9q2Y4
+AIzaSyB8q8RpuZVDMczjrGhm0avb5vuGeWhA39c
+AIzaSyCKxVLkXXyIEGqNeQpF6HdGoNBR3y7NXlw
+AIzaSyCZWJeplMBy-40dFx7Y1Vbws3ve1jejCSo
+AIzaSyDSEB4_vyF75dQLrDVyP0eVB64BPJ_eJLI
+AIzaSyC2YlkWXSKlDHuRUgS6JUeTdnFcwXV1lJ4
+AIzaSyCx2ap4Bhs4RbhIeyTlc43gT2DwxGUOr4A
+AIzaSyCcQVf1hdv-o9n9xD-iiR0ANYpH3e6PcRU
+    `.trim();
+    const MAX_USES_PER_KEY = 10;
+
+    let prompts = JSON.parse(localStorage.getItem('prompts')) || [];
+    let originalPrompts = JSON.parse(localStorage.getItem('originalPrompts')) || [];
+    let instructions = JSON.parse(localStorage.getItem('instructions')) || [];
+    let optimizedPrompts = JSON.parse(localStorage.getItem('optimizedPrompts')) || [];
+    let selectedInstructionIndex = localStorage.getItem('selectedInstructionIndex') || '';
+    let customApiKeys = JSON.parse(localStorage.getItem('customApiKeys')) || '';
+
+    window.onload = () => {
+      document.getElementById('user-api').value = customApiKeys;
+      document.getElementById('input-prompts').value = originalPrompts.join('\n');
+      if (selectedInstructionIndex) {
+        document.getElementById('instruction-select').value = selectedInstructionIndex;
+      }
+      displayInstructions();
+      displayPrompts();
+      updateOutput();
+    };
+
+    function showError(id, msg) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => el.style.display = 'none', 5000);
+    }
+
+    function saveUserApi() {
+      const input = document.getElementById('user-api').value.trim();
+      if (!input) {
+        localStorage.removeItem('customApiKeys');
+        customApiKeys = '';
+        showError('user-api-error', 'Đã xoá API key tuỳ chỉnh. Sẽ dùng API mặc định.');
+        return;
+      }
+      customApiKeys = input;
+      localStorage.setItem('customApiKeys', JSON.stringify(customApiKeys));
+      showError('user-api-error', 'Đã lưu API key tuỳ chỉnh thành công!');
+    }
+
+    function saveInputPrompts() {
+      const input = document.getElementById('input-prompts').value.trim();
+      if (!input) {
+        showError('input-error', 'Vui lòng nhập ít nhất một prompt.');
+        return;
+      }
+      const newPrompts = input.split('\n').map(p => p.trim()).filter(p => p);
+      originalPrompts = newPrompts.slice(); // bản gốc
+      prompts = newPrompts.slice();         // bản dùng để tối ưu
+      localStorage.setItem('originalPrompts', JSON.stringify(originalPrompts));
+      localStorage.setItem('prompts', JSON.stringify(prompts));
+      displayPrompts();
+      showError('input-error', 'Đã lưu prompts và giữ bản gốc thành công!');
+    }
+
+    function restoreOriginalPrompts() {
+      if (!originalPrompts.length) {
+        showError('input-error', 'Không có bản gốc để khôi phục.');
+        return;
+      }
+      prompts = originalPrompts.slice();
+      localStorage.setItem('prompts', JSON.stringify(prompts));
+      displayPrompts();
+      showError('input-error', 'Đã khôi phục prompts gốc!');
+    }
+
+    function addInstruction() {
+      const instruction = document.getElementById('new-instruction').value.trim();
+      if (!instruction) {
+        showError('instruction-error', 'Vui lòng nhập một hướng dẫn.');
+        return;
+      }
+      instructions.push(instruction);
+      localStorage.setItem('instructions', JSON.stringify(instructions));
+      document.getElementById('new-instruction').value = '';
+      displayInstructions();
+      showError('instruction-error', 'Đã thêm hướng dẫn thành công!');
+    }
+
+    function displayInstructions() {
+      const list = document.getElementById('instruction-list');
+      const select = document.getElementById('instruction-select');
+      list.innerHTML = '';
+      select.innerHTML = '<option value="">Chọn một hướng dẫn</option>';
+      instructions.forEach((inst, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = inst.slice(0, 50) + (inst.length > 50 ? '...' : '');
+        select.appendChild(opt);
+        const div = document.createElement('div');
+        div.className = 'instruction-item';
+        const textarea = document.createElement('textarea');
+        textarea.value = inst;
+        textarea.onchange = () => {
+          instructions[i] = textarea.value;
+          localStorage.setItem('instructions', JSON.stringify(instructions));
+        };
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-btn';
+        delBtn.textContent = 'Xoá';
+        delBtn.onclick = () => {
+          if (confirm('Bạn có chắc muốn xoá hướng dẫn này?')) {
+            instructions.splice(i, 1);
+            if (i == selectedInstructionIndex) {
+              selectedInstructionIndex = '';
+              localStorage.setItem('selectedInstructionIndex', '');
+              select.value = '';
+            }
+            localStorage.setItem('instructions', JSON.stringify(instructions));
+            displayInstructions();
+          }
+        };
+        div.appendChild(textarea);
+        div.appendChild(delBtn);
+        list.appendChild(div);
+      });
+      if (selectedInstructionIndex && instructions[selectedInstructionIndex]) {
+        select.value = selectedInstructionIndex;
+      }
+    }
+
+    function displayPrompts() {
+      const list = document.getElementById('prompt-list');
+      list.innerHTML = '';
+      prompts.forEach((item, i) => {
+        const div = document.createElement('div');
+        div.className = 'prompt-item';
+        div.innerHTML = `<span class="stt">[${i + 1}]</span><textarea id="prompt-${i}">${item}</textarea>`;
+        const optBtn = document.createElement('button');
+        optBtn.className = 'optimize-btn';
+        optBtn.textContent = 'Tối ưu';
+        optBtn.onclick = () => optimizeSinglePrompt(i);
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-btn';
+        delBtn.textContent = 'Xoá';
+        delBtn.onclick = () => {
+          if (confirm('Bạn có chắc muốn xoá prompt này?')) {
+            prompts.splice(i, 1);
+            localStorage.setItem('prompts', JSON.stringify(prompts));
+            displayPrompts();
+          }
+        };
+        const status = document.createElement('span');
+        status.className = 'status';
+        status.id = `status-${i}`;
+        div.appendChild(optBtn);
+        div.appendChild(delBtn);
+        div.appendChild(status);
+        list.appendChild(div);
+      });
+    }
+
+    async function gemini(apiKeys, instruction, text, index) {
+      const keys = apiKeys.split('\n').filter(k => k.trim().length >= 30);
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`;
+      const payload = { contents: [{ parts: [{ text: `${instruction}\n\nPrompt: ${text}` }] }] };
+      let usage = {}, attempts = 0, idx = 0;
+      const maxAttempts = keys.length * MAX_USES_PER_KEY;
+      const status = document.getElementById(`status-${index}`);
+      status.textContent = 'Đang xử lý...';
+      status.style.color = 'blue';
+      while (attempts < maxAttempts) {
+        usage[idx] = usage[idx] || 0;
+        const key = keys[idx];
+        attempts++;
+        usage[idx]++;
+        try {
+          const ctrl = new AbortController();
+          const timeout = setTimeout(() => ctrl.abort(), 10000);
+          const res = await fetch(`${endpoint}?key=${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl.signal
+          });
+          clearTimeout(timeout);
+          const data = await res.json();
+          if (res.ok && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+            const out = data.candidates[0].content.parts[0].text.replace(/\n/g, ' ');
+            status.textContent = '✓ Xong';
+            status.style.color = 'green';
+            return out;
+          } else {
+            status.textContent = `Lỗi: ${data.error?.message || 'Không rõ'}`;
+            status.style.color = 'red';
+          }
+        } catch (e) {
+          status.textContent = `Lỗi: ${e.message}`;
+          status.style.color = 'red';
+        }
+        if (usage[idx] >= MAX_USES_PER_KEY) idx = (idx + 1) % keys.length;
+      }
+      status.textContent = 'Lỗi: Tất cả API key đều không hoạt động.';
+      status.style.color = 'red';
+      return text;
+    }
+
+    async function optimizeSinglePrompt(i) {
+      const prompt = document.getElementById(`prompt-${i}`).value.trim();
+      if (!prompt) return showError('optimize-error', `Prompt #${i + 1} bị trống.`);
+      const instIdx = document.getElementById('instruction-select').value;
+      if (instIdx === '') return showError('optimize-error', 'Vui lòng chọn một hướng dẫn.');
+      const result = await gemini(customApiKeys || USER_API_KEYS, instructions[instIdx], prompt, i);
+      prompts[i] = result;
+      localStorage.setItem('prompts', JSON.stringify(prompts));
+      document.getElementById(`prompt-${i}`).value = result;
+      displayPrompts();
+    }
+
+    async function optimizeAllPrompts() {
+      if (!prompts.length) return showError('optimize-error', 'Chưa có prompt nào.');
+      const instIdx = document.getElementById('instruction-select').value;
+      if (instIdx === '') return showError('optimize-error', 'Vui lòng chọn hướng dẫn.');
+      const inst = instructions[instIdx];
+      const bar = document.getElementById('progress-bar');
+      document.getElementById('progress-container').style.display = 'block';
+      optimizedPrompts = [];
+      for (let i = 0; i < prompts.length; i++) {
+        const result = await gemini(customApiKeys || USER_API_KEYS, inst, prompts[i], i);
+        optimizedPrompts.push(result);
+        prompts[i] = result;
+        document.getElementById(`prompt-${i}`).value = result;
+        const percent = Math.round(((i + 1) / prompts.length) * 100);
+        bar.style.width = `${percent}%`; bar.textContent = `${percent}%`;
+      }
+      localStorage.setItem('prompts', JSON.stringify(prompts));
+      localStorage.setItem('optimizedPrompts', JSON.stringify(optimizedPrompts));
+      updateOutput();
+      document.getElementById('progress-container').style.display = 'none';
+    }
+
+    function updateOutput() {
+      document.getElementById('output-prompts').textContent = optimizedPrompts.join('\n\n');
+    }
+
+    function copyOutput() {
+      if (!optimizedPrompts.length) return showError('optimize-error', 'Không có dữ liệu để sao chép.');
+      navigator.clipboard.writeText(optimizedPrompts.join('\n\n')).then(() => {
+        showError('optimize-error', 'Đã sao chép kết quả!');
+      });
+    }
+
+    function downloadTxt() {
+      if (!optimizedPrompts.length) return showError('optimize-error', 'Không có dữ liệu để tải.');
+      const blob = new Blob([optimizedPrompts.join('\n\n')], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'optimized_prompts.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('instruction-select').addEventListener('change', function() {
+      selectedInstructionIndex = this.value;
+      localStorage.setItem('selectedInstructionIndex', selectedInstructionIndex);
+    });
+  </script>
+</body>
+</html>

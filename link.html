@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý URL Gist - Cloudflare Proxy</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1000px; margin: auto; padding: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
+    th { background: #f0f0f0; }
+    img { max-width: 120px; height: auto; }
+    button { padding: 5px 10px; }
+    a.title-link { text-decoration: none; color: #065fd4; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h2>📺 Quản lý URL Gist (Ẩn token với Cloudflare Workers)</h2>
+<p>Click tiêu đề video để mở video trên YouTube. Dữ liệu được lấy từ Gist và cập nhật qua proxy an toàn.</p>
+
+<table id="url-table">
+  <thead>
+    <tr>
+      <th>Thumbnail</th>
+      <th>Tiêu đề</th>
+      <th>Ngày tải lên (VN)</th>
+      <th>Lượt xem</th>
+      <th>Thời lượng</th>
+      <th>🗑️</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+  const gistId = '1ebba5d4de0a598590fa4a5e43a1d5db';
+  const filename = 'data.json';
+  const apiKey = 'AIzaSyCG1tA3mHoG60_Ya91Gjf0s2NBSXNS2AMY'; // YouTube API key
+  const cloudflareEndpoint = 'https://github.fnooub.workers.dev/'; // Endpoint để cập nhật Gist
+  let urls = [];
+
+  async function fetchUrls() {
+    const res = await fetch(`https://api.github.com/gists/${gistId}`);
+    const gist = await res.json();
+    try {
+      const raw = JSON.parse(gist.files[filename]?.content || '[]');
+      const map = {};
+      raw.forEach(entry => {
+        const prev = map[entry.url];
+        if (!prev || new Date(entry.time) > new Date(prev.time)) {
+          map[entry.url] = entry;
+        }
+      });
+      urls = Object.values(map).sort((a, b) => new Date(b.time) - new Date(a.time));
+    } catch (err) {
+      console.warn('Không parse được JSON:', err);
+      urls = [];
+    }
+    renderTable();
+  }
+
+  function parseVideoId(url) {
+    try {
+      const u = new URL(url);
+      if (u.hostname === 'youtu.be') return u.pathname.slice(1);
+      return u.searchParams.get('v');
+    } catch {
+      return null;
+    }
+  }
+
+  function parseDuration(iso) {
+    const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    const h = parseInt(match[1] || 0), m = parseInt(match[2] || 0), s = parseInt(match[3] || 0);
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function toVietnamTime(utcString) {
+    const date = new Date(utcString);
+    const vn = new Date(date.getTime() + 7 * 3600000);
+    return vn.toLocaleString('vi-VN');
+  }
+
+  async function getVideoData(videoId) {
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoId}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.items?.[0] || null;
+  }
+
+  async function renderTable() {
+    const tbody = document.querySelector('#url-table tbody');
+    tbody.innerHTML = '';
+
+    for (let i = 0; i < urls.length; i++) {
+      const entry = urls[i];
+      const videoId = parseVideoId(entry.url);
+      const tr = document.createElement('tr');
+
+      if (!videoId) {
+        tr.innerHTML = `<td colspan="6">❌ Không hợp lệ: ${entry.url}</td>`;
+        tbody.appendChild(tr);
+        continue;
+      }
+
+      const video = await getVideoData(videoId);
+      if (!video) {
+        tr.innerHTML = `<td colspan="6">❌ Không lấy được thông tin: ${entry.url}</td>`;
+        tbody.appendChild(tr);
+        continue;
+      }
+
+      const title = video.snippet.title;
+      const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const publishedAtVN = toVietnamTime(video.snippet.publishedAt);
+      const views = Number(video.statistics.viewCount).toLocaleString('vi-VN');
+      const duration = parseDuration(video.contentDetails.duration);
+      const thumbnail = video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default.url;
+
+      tr.innerHTML = `
+        <td><img src="${thumbnail}" alt="Thumbnail"></td>
+        <td><a href="${videoUrl}" target="_blank" class="title-link">${title}</a></td>
+        <td>${publishedAtVN}</td>
+        <td>${views}</td>
+        <td>${duration}</td>
+        <td><button onclick="deleteRow(${i})">Xoá</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function deleteRow(index) {
+    if (!confirm('Bạn có chắc muốn xoá dòng này?')) return;
+    urls.splice(index, 1);
+    await updateGist();
+    renderTable();
+  }
+
+  async function updateGist() {
+    await fetch(cloudflareEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gistId,
+        filename,
+        content: JSON.stringify(urls, null, 2)
+      })
+    });
+  }
+
+  fetchUrls();
+</script>
+
+</body>
+</html>

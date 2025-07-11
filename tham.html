@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý Video YouTube qua Cloudflare Workers</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1000px; margin: auto; padding: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
+    th { background: #f0f0f0; }
+    img { max-width: 120px; height: auto; }
+    button { padding: 5px 10px; }
+    a.title-link { text-decoration: none; color: #065fd4; font-weight: bold; }
+    input[type="text"] { width: 70%; padding: 6px; margin-right: 8px; }
+  </style>
+</head>
+<body>
+
+<h2>🎧 Quản lý video YouTube (Cloudflare KV)</h2>
+<p>Click tiêu đề để xem video. Dữ liệu lấy từ KV thông qua Worker.</p>
+
+<div style="margin-bottom: 1rem;">
+  <input type="text" id="newUrl" placeholder="Nhập URL YouTube...">
+  <button onclick="addVideo()">+ Thêm video</button>
+</div>
+
+<table id="url-table">
+  <thead>
+    <tr>
+      <th>Thumbnail</th>
+      <th>Tiêu đề</th>
+      <th>Ngày tải (VN)</th>
+      <th>Lượt xem</th>
+      <th>Thời lượng</th>
+      <th>🗑️</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+  const apiEndpoint = 'https://tham.fnooub.workers.dev/';
+  const apiKey = 'AIzaSyCG1tA3mHoG60_Ya91Gjf0s2NBSXNS2AMY';
+  let urls = [];
+
+  async function fetchUrls() {
+    const res = await fetch(apiEndpoint);
+    const raw = await res.json();
+
+    urls = raw.map(item => ({
+      id: item.id,
+      url: item.value,
+      time: new Date(Number(item.id)).toISOString()
+    })).filter(entry => entry.url.includes('youtube.com'));
+
+    urls.sort((a, b) => new Date(b.time) - new Date(a.time));
+    renderTable();
+  }
+
+  function parseVideoId(url) {
+    try {
+      const u = new URL(url);
+      if (u.hostname === 'youtu.be') return u.pathname.slice(1);
+      return u.searchParams.get('v');
+    } catch {
+      return null;
+    }
+  }
+
+  function parseDuration(iso) {
+    const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    const h = parseInt(match[1] || 0), m = parseInt(match[2] || 0), s = parseInt(match[3] || 0);
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function toVietnamTime(utcString) {
+    const date = new Date(utcString);
+    const vn = new Date(date.getTime() + 7 * 3600000);
+    return vn.toLocaleString('vi-VN');
+  }
+
+  async function getVideoData(videoId) {
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoId}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.items?.[0] || null;
+  }
+
+  async function renderTable() {
+    const tbody = document.querySelector('#url-table tbody');
+    tbody.innerHTML = '';
+
+    for (let i = 0; i < urls.length; i++) {
+      const entry = urls[i];
+      const videoId = parseVideoId(entry.url);
+      const tr = document.createElement('tr');
+
+      if (!videoId) {
+        tr.innerHTML = `<td colspan="6">❌ Không hợp lệ: ${entry.url}</td>`;
+        tbody.appendChild(tr);
+        continue;
+      }
+
+      const video = await getVideoData(videoId);
+      if (!video) {
+        tr.innerHTML = `<td colspan="6">❌ Không lấy được thông tin: ${entry.url}</td>`;
+        tbody.appendChild(tr);
+        continue;
+      }
+
+      const title = video.snippet.title;
+      const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const publishedAtVN = toVietnamTime(video.snippet.publishedAt);
+      const views = Number(video.statistics.viewCount).toLocaleString('vi-VN');
+      const duration = parseDuration(video.contentDetails.duration);
+      const thumbnail = video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default.url;
+
+      tr.innerHTML = `
+        <td><img src="${thumbnail}" alt="Thumbnail"></td>
+        <td><a href="${videoUrl}" target="_blank" class="title-link">${title}</a></td>
+        <td>${publishedAtVN}</td>
+        <td>${views}</td>
+        <td>${duration}</td>
+        <td><button onclick="deleteRow('${entry.id}')">Xoá</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function deleteRow(id) {
+    if (!confirm('Bạn có chắc muốn xoá dòng này?')) return;
+    await fetch(`${apiEndpoint}?id=${id}`, { method: 'DELETE' });
+    urls = urls.filter(entry => entry.id !== id);
+    renderTable();
+  }
+
+  async function addVideo() {
+    const url = document.getElementById("newUrl").value.trim();
+    if (!url || !url.includes("youtube.com")) return alert("URL không hợp lệ");
+
+    await fetch(apiEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: url
+    });
+    document.getElementById("newUrl").value = "";
+    fetchUrls();
+  }
+
+  fetchUrls();
+</script>
+
+</body>
+</html>

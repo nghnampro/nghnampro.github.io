@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Lấy Transcript YouTube</title>
+  <title>Lấy Transcript qua Worker</title>
   <style>
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; }
     textarea { width: 100%; height: 200px; }
@@ -11,66 +11,25 @@
   </style>
 </head>
 <body>
-  <h2>Lấy Transcript YouTube</h2>
+  <h2>Lấy Transcript YouTube (qua Worker)</h2>
   <p>Nhập danh sách URL YouTube (mỗi dòng một URL):</p>
   <textarea id="urlInput"></textarea>
   <br>
-  <button onclick="getTranscripts()">Lấy transcript</button>
+  <button onclick="processUrls()">Lấy transcript</button>
   <h3>Kết quả:</h3>
   <pre id="output"></pre>
   <button id="downloadBtn" style="display:none;" onclick="downloadFile()">Tải về dulieu.txt</button>
 
   <script>
-    const API_URL = "https://www.youtube-transcript.io/api/transcripts";
-    const API_TOKEN = "68a227676f9cf35849bd72b5"; // gắn cứng token
+    const WORKER_URL = "https://script.nghnampro.workers.dev/";
 
-    // Tách video ID từ URL
+    // Hàm tách video ID từ URL
     function extractVideoId(url) {
       const match = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
       return match ? match[1] : null;
     }
 
-    // Delay
-    function delay(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    function formatTime(secondsStr) {
-      try {
-        const seconds = parseFloat(secondsStr);
-        const minutes = Math.floor(seconds / 60);
-        const remain = Math.floor(seconds % 60);
-        return `${minutes.toString().padStart(2, "0")}:${remain
-          .toString()
-          .padStart(2, "0")}`;
-      } catch {
-        return "00:00";
-      }
-    }
-
-    async function fetchBatch(ids) {
-      const resp = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Authorization": "Basic " + API_TOKEN,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ ids }),
-      });
-
-      if (resp.status === 429) {
-        const retryAfter = parseInt(resp.headers.get("Retry-After") || "3");
-        await delay(retryAfter * 1000);
-        return fetchBatch(ids); // thử lại
-      }
-      if (!resp.ok) {
-        console.error("HTTP error", resp.status);
-        return [];
-      }
-      return await resp.json();
-    }
-
-    async function getTranscripts() {
+    async function processUrls() {
       const urls = document.getElementById("urlInput").value.split("\n").map(x => x.trim()).filter(Boolean);
       const ids = urls.map(extractVideoId).filter(Boolean);
 
@@ -79,41 +38,21 @@
         return;
       }
 
-      let results = [];
-      for (let i = 0; i < ids.length; i += 50) {
-        const batch = ids.slice(i, i + 50);
-        const data = await fetchBatch(batch);
-        results = results.concat(data);
-        if (i + 50 < ids.length) {
-          await delay(3000); // nghỉ 3 giây giữa các batch
-        }
+      // Ghép query string
+      const query = "?ids=" + ids.join(",");
+      const fullUrl = WORKER_URL + query;
+
+      try {
+        const resp = await fetch(fullUrl);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const text = await resp.text();
+
+        document.getElementById("output").textContent = text;
+        document.getElementById("downloadBtn").style.display = "inline-block";
+        window.transcriptText = text; // lưu để tải
+      } catch (err) {
+        document.getElementById("output").textContent = "Lỗi: " + err.message;
       }
-
-      // Format ra text
-      let textOutput = "";
-      results.forEach((video, idx) => {
-        const title = video.title || "Không có tiêu đề";
-        let transcriptText = "Không có nội dung.";
-
-        if (video.tracks && video.tracks[0]?.transcript) {
-          const lines = video.tracks[0].transcript.map(line => {
-            const ts = formatTime(line.start);
-            const t = (line.text || "").replace(/\n/g, " ");
-            return `${ts} ${t}`;
-          });
-          transcriptText = lines.join("\n");
-        }
-
-        textOutput += `Kịch bản ${idx + 1}\n`;
-        textOutput += `Tiêu đề: ${title}\n`;
-        textOutput += "Nội dung:\n";
-        textOutput += transcriptText + "\n\n";
-        textOutput += "---\n\n";
-      });
-
-      document.getElementById("output").textContent = textOutput;
-      document.getElementById("downloadBtn").style.display = "inline-block";
-      window.transcriptText = textOutput; // lưu để tải
     }
 
     function downloadFile() {
